@@ -1,8 +1,8 @@
 {
   "product": "ウッディーのウキウキシフト",
-  "version": "v1.1.1",
+  "version": "v1.1.2",
   "engine_url": "https://raw.githubusercontent.com/touka0928/woody-shift-engine/main/engine.gs",
-  "sha256": "0370f5dd9844526d15a31fea8f225bbee4440a3b51b482c795e8acbd25cf9a0d",
+  "sha256": "7ede8389ce5ceed73d12c67d2e32a421d78c610b5082460909b977561d8a81f1",
   "released_at": "2026-10-01",
   "min_bootstrap": "v1.0.0"
 }
