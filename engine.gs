@@ -1,6 +1,6 @@
 /**
  * 放課後等デイサービス向け シフト自動作成アプリ
- * 配布版 v1.2 / GASエンジン v1.0.0
+ * 配布版 v1.2 / GASエンジン v1.1.0
  *
  * 対象:
  *   ウッディーのウキウキシフト（配布用）
@@ -19,7 +19,7 @@
  */
 
 const SHIFT_APP = Object.freeze({
-  VERSION: 'v1.0.0',
+  VERSION: 'v1.1.0',
   MAX_STAFF: 15,
   MAX_DAYS: 31,
 
@@ -28,6 +28,7 @@ const SHIFT_APP = Object.freeze({
     STAFF: '職員セットアップ',
     WORK_STYLE: '働き方設定',
     WORK_PATTERN: '勤務パターン設定',
+    SERVICE_TIME: '提供時間設定',
     PLACEMENT: '配置・加算設定',
     REQUEST: '希望入力',
     USAGE: '利用予定',
@@ -807,6 +808,8 @@ function loadContext_() {
     numberOrZero_(findLabelValue_(setupValues, '最大連勤')) || 4;
   const requestOffLimit =
     numberOrZero_(findLabelValue_(setupValues, '希望休上限'));
+  const municipality =
+    String(findLabelValue_(setupValues, '運用自治体') || '').trim();
 
   const transportUse =
     String(findLabelValue_(setupValues, '送迎') || '').trim();
@@ -816,7 +819,7 @@ function loadContext_() {
     String(findLabelValue_(setupValues, '各車両の社員同乗') || '').trim();
 
   // 職員セットアップ
-  const staffValues = staffSheet.getRange('A4:Z19').getValues();
+  const staffValues = staffSheet.getRange('A4:AF19').getValues();
   const staffHeaders = staffValues[0].map(String);
   const staffHeader = buildHeaderMap_(staffHeaders);
 
@@ -885,6 +888,12 @@ function loadContext_() {
       fixedWorkWeekdays: stringAt_(row, staffHeader, '固定勤務曜日'),
       fixedDaysOff: stringAt_(row, staffHeader, '固定休日'),
       restrictionMemo: stringAt_(row, staffHeader, '勤務制限・備考'),
+      adminRegisteredRole: stringAt_(row, staffHeader, '行政登録職種'),
+      adminEmploymentClass: stringAt_(row, staffHeader, '常勤区分'),
+      adminExclusivity: stringAt_(row, staffHeader, '専従・兼務'),
+      adminConcurrentRole: stringAt_(row, staffHeader, '兼務職種'),
+      adminNoticeStatus: stringAt_(row, staffHeader, '届出確認'),
+      adminMemo: stringAt_(row, staffHeader, '行政メモ'),
       requiredDays: requiredDays,
       minimumHours: minimumHours,
       targetHours: targetHours,
@@ -952,6 +961,10 @@ function loadContext_() {
 
   const workStyleValues = workStyleSheet.getRange('A4:N24').getValues();
   const patternValues = patternSheet.getRange('A4:L20').getValues();
+  const serviceTimeSheet = ss.getSheetByName(SHIFT_APP.SHEETS.SERVICE_TIME);
+  const serviceTimeValues = serviceTimeSheet
+    ? serviceTimeSheet.getRange('A3:F10').getDisplayValues()
+    : [];
 
   const rules = loadAdvancedRules_(ss);
   applyAdvancedDayRules_(days, rules, transportVehicleCount, unitCount);
@@ -968,6 +981,7 @@ function loadContext_() {
     preferredConsecutive: rulePreferred > 0 ? rulePreferred : preferredConsecutive,
     maxConsecutive: ruleMax > 0 ? ruleMax : maxConsecutive,
     requestOffLimit: requestOffLimit,
+    municipality: municipality,
     transportUse: transportUse,
     transportVehicleCount: transportVehicleCount,
     employeeRideRule: employeeRideRule,
@@ -978,11 +992,196 @@ function loadContext_() {
     locks: locks,
     workStyleValues: workStyleValues,
     patternValues: patternValues,
+    serviceTimeValues: serviceTimeValues,
     rules: rules
   };
 }
 
 
+
+
+function isWoodyTokyoMunicipality_(ctx) {
+  return ctx && (ctx.municipality === '府中市' || ctx.municipality === '国分寺市');
+}
+
+function hasAdminRole_(staff, role) {
+  const wanted = String(role || '').trim();
+  if (!staff || !wanted) return false;
+  return [
+    staff.adminRegisteredRole,
+    staff.adminConcurrentRole
+  ].some(function (x) {
+    return String(x || '').trim() === wanted;
+  });
+}
+
+function isTokyoCoreLegalStaff_(staff) {
+  return hasAdminRole_(staff, '児童指導員') ||
+    hasAdminRole_(staff, '保育士');
+}
+
+function parseClockMinutes_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.getHours() * 60 + value.getMinutes();
+  }
+  const s = String(value || '').trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return NaN;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 24 || min < 0 || min > 59) return NaN;
+  return h * 60 + min;
+}
+
+function getServiceWindow_(ctx, label) {
+  const rows = ctx.serviceTimeValues || [];
+  if (!rows.length) return null;
+  const header = buildHeaderMap_((rows[0] || []).map(String));
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    if (String(valueAt_(row, header, '区分') || '').trim() !== label) continue;
+    const start = parseClockMinutes_(valueAt_(row, header, '開始'));
+    const end = parseClockMinutes_(valueAt_(row, header, '終了'));
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return {start: start, end: end};
+  }
+  return null;
+}
+
+function getPatternWindow_(ctx, patternName) {
+  const rows = ctx.patternValues || [];
+  if (!rows.length) return null;
+  const header = buildHeaderMap_((rows[0] || []).map(String));
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const name = String(
+      valueAt_(row, header, '勤務パターン名') ||
+      valueAt_(row, header, 'パターン名') ||
+      ''
+    ).trim();
+    if (name !== patternName) continue;
+    if (String(valueAt_(row, header, '使用') || '').trim() !== '○') return null;
+    if (String(valueAt_(row, header, '配置算入') || '').trim() !== '○') return null;
+    const start = parseClockMinutes_(valueAt_(row, header, '開始'));
+    const end = parseClockMinutes_(valueAt_(row, header, '終了'));
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return {start: start, end: end};
+  }
+  return null;
+}
+
+function windowCovers_(pattern, service) {
+  return !!pattern && !!service &&
+    pattern.start <= service.start &&
+    pattern.end >= service.end;
+}
+
+function validateTokyoAdminCompliance_(ctx) {
+  const errors = [];
+  const warnings = [];
+
+  if (!isWoodyTokyoMunicipality_(ctx)) {
+    errors.push('運用自治体は「府中市」または「国分寺市」を選択してください。');
+    return {errors: errors, warnings: warnings};
+  }
+
+  const active = ctx.staff.filter(function (staff) { return staff.active; });
+
+  active.forEach(function (staff) {
+    const label = staff.id + ' ' + staff.name;
+    if (!staff.adminRegisteredRole) {
+      errors.push(label + '：行政登録職種が未入力です。');
+    }
+    if (!staff.adminEmploymentClass) {
+      errors.push(label + '：常勤区分が未入力です。');
+    }
+    if (!staff.adminExclusivity) {
+      errors.push(label + '：専従・兼務が未入力です。');
+    }
+    if (staff.adminNoticeStatus !== '確認済') {
+      errors.push(label + '：行政届出の確認状態が「確認済」ではありません。');
+    }
+    if (staff.legalEligible && !isTokyoCoreLegalStaff_(staff)) {
+      errors.push(
+        label + '：「児童指導員配置可」が○ですが、行政登録職種が児童指導員または保育士として確認できません。'
+      );
+    }
+  });
+
+  for (let u = 1; u <= ctx.unitCount; u++) {
+    const unit = '第' + u;
+    const fullTimeCore = active.some(function (staff) {
+      return staff.unit === unit &&
+        staff.adminEmploymentClass === '常勤' &&
+        isTokyoCoreLegalStaff_(staff) &&
+        staff.adminNoticeStatus === '確認済';
+    });
+    if (!fullTimeCore) {
+      errors.push(unit + '：常勤の児童指導員または保育士を1名以上確認できません。');
+    }
+  }
+
+  const hasManager = active.some(function (staff) {
+    return hasAdminRole_(staff, '管理者') &&
+      staff.adminNoticeStatus === '確認済';
+  });
+  if (!hasManager) {
+    errors.push('管理者の行政登録を確認できません。');
+  }
+
+  const configuredJihatsu = [];
+  for (let u = 1; u <= ctx.unitCount; u++) {
+    const unit = '第' + u;
+    const cfg = ctx.placement[unit] && ctx.placement[unit].jihatsukan;
+    if (!cfg) continue;
+    [cfg.main, cfg.sub].filter(Boolean).forEach(function (ref) {
+      const staff = findStaffByRef_(ctx, ref);
+      if (staff && configuredJihatsu.indexOf(staff) < 0) configuredJihatsu.push(staff);
+    });
+  }
+
+  const hasDedicatedFullTimeJihatsu = configuredJihatsu.some(function (staff) {
+    return staff.active &&
+      hasAdminRole_(staff, '児発管') &&
+      staff.adminEmploymentClass === '常勤' &&
+      staff.adminExclusivity === '専従' &&
+      staff.adminNoticeStatus === '確認済';
+  });
+  if (!hasDedicatedFullTimeJihatsu) {
+    errors.push('専任かつ常勤の児発管を1名以上確認できません。');
+  }
+
+  configuredJihatsu.forEach(function (staff) {
+    if (!hasAdminRole_(staff, '児発管')) {
+      errors.push(staff.name + '：児発管担当ですが行政登録職種に児発管がありません。');
+    }
+  });
+
+  const weekdayService = getServiceWindow_(ctx, '放課後');
+  const weekdayPattern = getPatternWindow_(ctx, '平日通常');
+  if (!windowCovers_(weekdayPattern, weekdayService)) {
+    errors.push('平日通常の配置算入時間が、放課後のサービス提供時間全体をカバーしていません。');
+  }
+
+  const holidayPattern = getPatternWindow_(ctx, '学校休日通常');
+  ['平日学休日', '学休日・代替'].forEach(function (label) {
+    const service = getServiceWindow_(ctx, label);
+    if (service && !windowCovers_(holidayPattern, service)) {
+      errors.push('学校休日通常の配置算入時間が、「' + label + '」のサービス提供時間全体をカバーしていません。');
+    }
+  });
+
+  if (ctx.municipality === '府中市') {
+    warnings.push('府中市で新規開設する場合は、市への事業所開設相談と東京都側の指定申請手続を別途確認してください。');
+  } else if (ctx.municipality === '国分寺市') {
+    warnings.push('国分寺市の指導検査は東京都の基準を準用するため、東京都基準と届出内容の一致を確認してください。');
+  }
+
+  return {
+    errors: unique_(errors),
+    warnings: unique_(warnings)
+  };
+}
 
 /* =========================================================
  * 4.5 高度ルール（施設・個人・ペア・月間例外）
@@ -1838,7 +2037,7 @@ function validateInitialSetup_(ctx) {
 
   if (String(findLabelValue_(setup, 'サービス種別') || '').trim() !==
       '放課後等デイサービス') {
-    errors.push('v1.1は「放課後等デイサービス」のみ対応しています。');
+    errors.push('v1.1.0は「放課後等デイサービス」のみ対応しています。');
   }
 
   if (ctx.unitCount !== 1 && ctx.unitCount !== 2) {
@@ -1943,6 +2142,10 @@ function validateInitialSetup_(ctx) {
       '勤務パターンが不足しています。少なくとも平日と学校休日の通常勤務を登録してください。'
     );
   }
+
+  const adminCheck = validateTokyoAdminCompliance_(ctx);
+  Array.prototype.push.apply(errors, adminCheck.errors);
+  Array.prototype.push.apply(warnings, adminCheck.warnings);
 
   if (ctx.transportUse === '使用する') {
     if (ctx.transportVehicleCount < 1) {
@@ -2782,6 +2985,7 @@ function countLegalStaff_(ctx, state, dayIndex, unit) {
     if (!staff.active) return;
     if (state.work[staff.index][dayIndex] !== 1) return;
     if (!staff.directSupport || !staff.legalEligible) return;
+    if (isWoodyTokyoMunicipality_(ctx) && !isTokyoCoreLegalStaff_(staff)) return;
     if (staff.halfDays.indexOf(dayIndex + 1) >= 0) return;
 
     const assigned = getAssignedUnit_(
@@ -2811,6 +3015,7 @@ function findBestLegalCandidate_(ctx, state, dayIndex, unit) {
   ctx.staff.forEach(function (staff) {
     if (!staff.active) return;
     if (!staff.directSupport || !staff.legalEligible) return;
+    if (isWoodyTokyoMunicipality_(ctx) && !isTokyoCoreLegalStaff_(staff)) return;
     if (!isUnitAllowedForStaff_(ctx, staff, dayIndex, unit)) return;
     if (staff.halfDays.indexOf(dayIndex + 1) >= 0) return;
     if (hardUnavailableReason_(ctx, staff, dayIndex)) return;
@@ -2839,7 +3044,7 @@ function findBestLegalCandidate_(ctx, state, dayIndex, unit) {
         wouldExceedMaxConsecutive_(
           state.work[staff.index],
           dayIndex,
-          getStaffMaxConsecutive_(ctx, staff, d)
+          getStaffMaxConsecutive_(ctx, staff, dayIndex)
         )) {
       return;
     }
@@ -3174,7 +3379,7 @@ function tryPlaceSoftNamedRole_(
         wouldExceedMaxConsecutive_(
           state.work[staff.index],
           dayIndex,
-          getStaffMaxConsecutive_(ctx, staff, d)
+          getStaffMaxConsecutive_(ctx, staff, dayIndex)
         )) {
       continue;
     }
@@ -4034,6 +4239,10 @@ function validateCurrentShift_(ctx, plan) {
   const errors = [];
   const warnings = [];
 
+  const adminCheck = validateTokyoAdminCompliance_(ctx);
+  Array.prototype.push.apply(errors, adminCheck.errors);
+  Array.prototype.push.apply(warnings, adminCheck.warnings);
+
   const shiftSheet = getSheetOrThrow_(ctx.ss, SHIFT_APP.SHEETS.SHIFT);
   const monthlySheet = getSheetOrThrow_(ctx.ss, SHIFT_APP.SHEETS.MONTHLY);
 
@@ -4355,6 +4564,7 @@ function countLegalStaffFromPlan_(ctx, plan, dayIndex, unit) {
     if (!staff.active) return;
     if (plan.work[staff.index][dayIndex] !== 1) return;
     if (!staff.directSupport || !staff.legalEligible) return;
+    if (isWoodyTokyoMunicipality_(ctx) && !isTokyoCoreLegalStaff_(staff)) return;
     if (staff.halfDays.indexOf(dayIndex + 1) >= 0) return;
 
     const assigned = getAssignedUnitFromMatrices_(
