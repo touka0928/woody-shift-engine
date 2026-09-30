@@ -1,6 +1,6 @@
 /**
  * 放課後等デイサービス向け シフト自動作成アプリ
- * 配布版 v1.2 / GASエンジン v1.1.0
+ * 配布版 v1.2 / GASエンジン v1.1.1
  *
  * 対象:
  *   ウッディーのウキウキシフト（配布用）
@@ -19,7 +19,7 @@
  */
 
 const SHIFT_APP = Object.freeze({
-  VERSION: 'v1.1.0',
+  VERSION: 'v1.1.1',
   MAX_STAFF: 15,
   MAX_DAYS: 31,
 
@@ -810,6 +810,10 @@ function loadContext_() {
     numberOrZero_(findLabelValue_(setupValues, '希望休上限'));
   const municipality =
     String(findLabelValue_(setupValues, '運用自治体') || '').trim();
+  const businessHours = {
+    weekday: readSetupClockRange_(setupValues, '届出営業時間（放課後）'),
+    holiday: readSetupClockRange_(setupValues, '届出営業時間（学校休日）')
+  };
 
   const transportUse =
     String(findLabelValue_(setupValues, '送迎') || '').trim();
@@ -982,6 +986,7 @@ function loadContext_() {
     maxConsecutive: ruleMax > 0 ? ruleMax : maxConsecutive,
     requestOffLimit: requestOffLimit,
     municipality: municipality,
+    businessHours: businessHours,
     transportUse: transportUse,
     transportVehicleCount: transportVehicleCount,
     employeeRideRule: employeeRideRule,
@@ -1031,6 +1036,20 @@ function parseClockMinutes_(value) {
   const min = Number(m[2]);
   if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 24 || min < 0 || min > 59) return NaN;
   return h * 60 + min;
+}
+
+function readSetupClockRange_(values, label) {
+  for (let r = 0; r < values.length; r++) {
+    const row = values[r] || [];
+    for (let c = 0; c < row.length - 2; c++) {
+      if (String(row[c] || '').trim() !== label) continue;
+      const start = parseClockMinutes_(row[c + 1]);
+      const end = parseClockMinutes_(row[c + 2]);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+      return {start: start, end: end};
+    }
+  }
+  return null;
 }
 
 function getServiceWindow_(ctx, label) {
@@ -1157,17 +1176,32 @@ function validateTokyoAdminCompliance_(ctx) {
     }
   });
 
-  const weekdayService = getServiceWindow_(ctx, '放課後');
+  const weekdayBusiness = ctx.businessHours && ctx.businessHours.weekday;
+  const holidayBusiness = ctx.businessHours && ctx.businessHours.holiday;
   const weekdayPattern = getPatternWindow_(ctx, '平日通常');
-  if (!windowCovers_(weekdayPattern, weekdayService)) {
-    errors.push('平日通常の配置算入時間が、放課後のサービス提供時間全体をカバーしていません。');
+  const holidayPattern = getPatternWindow_(ctx, '学校休日通常');
+
+  if (!weekdayBusiness) {
+    errors.push('届出営業時間（放課後）が未入力または不正です。');
+  } else if (!windowCovers_(weekdayPattern, weekdayBusiness)) {
+    errors.push('平日通常の配置算入時間が、届出営業時間（放課後）全体をカバーしていません。');
   }
 
-  const holidayPattern = getPatternWindow_(ctx, '学校休日通常');
+  if (!holidayBusiness) {
+    errors.push('届出営業時間（学校休日）が未入力または不正です。');
+  } else if (!windowCovers_(holidayPattern, holidayBusiness)) {
+    errors.push('学校休日通常の配置算入時間が、届出営業時間（学校休日）全体をカバーしていません。');
+  }
+
+  const weekdayService = getServiceWindow_(ctx, '放課後');
+  if (weekdayBusiness && weekdayService && !windowCovers_(weekdayBusiness, weekdayService)) {
+    errors.push('届出営業時間（放課後）が標準サービス提供時間をカバーしていません。');
+  }
+
   ['平日学休日', '学休日・代替'].forEach(function (label) {
     const service = getServiceWindow_(ctx, label);
-    if (service && !windowCovers_(holidayPattern, service)) {
-      errors.push('学校休日通常の配置算入時間が、「' + label + '」のサービス提供時間全体をカバーしていません。');
+    if (holidayBusiness && service && !windowCovers_(holidayBusiness, service)) {
+      errors.push('届出営業時間（学校休日）が「' + label + '」の標準サービス提供時間をカバーしていません。');
     }
   });
 
@@ -2037,7 +2071,7 @@ function validateInitialSetup_(ctx) {
 
   if (String(findLabelValue_(setup, 'サービス種別') || '').trim() !==
       '放課後等デイサービス') {
-    errors.push('v1.1.0は「放課後等デイサービス」のみ対応しています。');
+    errors.push('v1.1.1は「放課後等デイサービス」のみ対応しています。');
   }
 
   if (ctx.unitCount !== 1 && ctx.unitCount !== 2) {
