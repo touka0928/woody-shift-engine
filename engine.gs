@@ -1,6 +1,6 @@
 /**
  * 放課後等デイサービス向け シフト自動作成アプリ
- * 配布版 v1.2 / GASエンジン v1.1.1
+ * 配布版 v1.2 / GASエンジン v1.1.2
  *
  * 対象:
  *   ウッディーのウキウキシフト（配布用）
@@ -19,7 +19,7 @@
  */
 
 const SHIFT_APP = Object.freeze({
-  VERSION: 'v1.1.1',
+  VERSION: 'v1.1.2',
   MAX_STAFF: 15,
   MAX_DAYS: 31,
 
@@ -1160,14 +1160,17 @@ function validateTokyoAdminCompliance_(ctx) {
   }
 
   const hasDedicatedFullTimeJihatsu = configuredJihatsu.some(function (staff) {
+    const exclusivityOk =
+      staff.adminExclusivity === '専従' ||
+      (staff.adminExclusivity === '兼務' && hasAdminRole_(staff, '管理者'));
     return staff.active &&
       hasAdminRole_(staff, '児発管') &&
       staff.adminEmploymentClass === '常勤' &&
-      staff.adminExclusivity === '専従' &&
+      exclusivityOk &&
       staff.adminNoticeStatus === '確認済';
   });
   if (!hasDedicatedFullTimeJihatsu) {
-    errors.push('専任かつ常勤の児発管を1名以上確認できません。');
+    errors.push('専任かつ常勤の児発管（同一事業所の管理者兼務可）を1名以上確認できません。');
   }
 
   configuredJihatsu.forEach(function (staff) {
@@ -2071,7 +2074,7 @@ function validateInitialSetup_(ctx) {
 
   if (String(findLabelValue_(setup, 'サービス種別') || '').trim() !==
       '放課後等デイサービス') {
-    errors.push('v1.1.1は「放課後等デイサービス」のみ対応しています。');
+    errors.push('v1.1.2は「放課後等デイサービス」のみ対応しています。');
   }
 
   if (ctx.unitCount !== 1 && ctx.unitCount !== 2) {
