@@ -1,6 +1,6 @@
 /**
  * 放課後等デイサービス向け シフト自動作成アプリ
- * 配布版 v1.2 / GASエンジン v1.1.2
+ * 配布版 v1.2 / GASエンジン v1.1.3
  *
  * 対象:
  *   ウッディーのウキウキシフト（配布用）
@@ -19,7 +19,7 @@
  */
 
 const SHIFT_APP = Object.freeze({
-  VERSION: 'v1.1.2',
+  VERSION: 'v1.1.3',
   MAX_STAFF: 15,
   MAX_DAYS: 31,
 
@@ -2074,7 +2074,7 @@ function validateInitialSetup_(ctx) {
 
   if (String(findLabelValue_(setup, 'サービス種別') || '').trim() !==
       '放課後等デイサービス') {
-    errors.push('v1.1.2は「放課後等デイサービス」のみ対応しています。');
+    errors.push('v1.1.3は「放課後等デイサービス」のみ対応しています。');
   }
 
   if (ctx.unitCount !== 1 && ctx.unitCount !== 2) {
@@ -5177,13 +5177,22 @@ function runSafely_(actionName, callback) {
     const message = error && error.message
       ? error.message
       : String(error);
+    const stack = error && error.stack
+      ? String(error.stack)
+      : '';
+    const stackLines = stack
+      ? stack.split('\n').slice(0, 5).map(function (x) { return String(x || '').trim(); }).filter(Boolean)
+      : [];
+    const logMessage = stackLines.length
+      ? message + ' | ' + stackLines.join(' <- ')
+      : message;
 
     try {
       appendLog_(
         'ERROR',
         actionName,
         '',
-        message
+        logMessage
       );
     } catch (logError) {
       // ログシート自体が壊れている場合でも、本来のエラー表示を優先する。
